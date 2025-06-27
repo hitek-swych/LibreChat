@@ -1,13 +1,14 @@
-import { MCP } from 'librechat-data-provider';
-import { Response } from 'express';
-import { logger } from '@librechat/data-schemas';
-import { CacheKeys, Constants } from 'librechat-data-provider';
+const { logger } = require('@librechat/data-schemas');
+const { CacheKeys, Constants } = require('librechat-data-provider');
+const { getLogStores } = require('~/cache');
+const { getMCPManager } = require('~/config');
+const { getCachedTools, setCachedTools } = require('~/server/services/Config');
 
 /**
  * Add a new MCP tool to the system
  * This integrates the MCP tool into the available tools cache
  */
-export const addTool = async (req: { body: MCP; user?: { id: string } }, res: Response) => {
+const addTool = async (req, res) => {
   try {
     // Check authentication
     if (!req.user?.id) {
@@ -16,8 +17,9 @@ export const addTool = async (req: { body: MCP; user?: { id: string } }, res: Re
     }
 
     const { body: mcp } = req;
-
+    
     // Validate required fields
+    // still need to add the rest (url, timeouts,)
     if (!mcp?.metadata?.name) {
       logger.warn('MCP tool creation with missing required fields');
       return res.status(400).json({ message: 'Missing required fields: name is required' });
@@ -38,7 +40,7 @@ export const addTool = async (req: { body: MCP; user?: { id: string } }, res: Re
     const toolName = mcp.metadata.name;
     const serverName = mcp.metadata.name;
     const existingTools = await mcpToolsCache.get(serverName);
-
+    
     if (existingTools && Array.isArray(existingTools) && existingTools.length > 0) {
       logger.warn(`MCP tool ${serverName} already exists`);
       return res.status(409).json({ message: 'MCP tool already exists' });
@@ -60,11 +62,47 @@ export const addTool = async (req: { body: MCP; user?: { id: string } }, res: Re
       toolkit: false,
     };
 
+    // console.log('before', mcpToolsCache);
+
     // Store the MCP tool in the MCP tools cache
     await mcpToolsCache.set(serverName, [mcpTool]);
 
+    // Add the server configuration to the MCPManager so it appears in tools list
+    const mcpManager = getMCPManager();
+    const serverConfig = {
+      customUserVars: mcp.metadata.customHeaders?.reduce((acc, header) => {
+        acc[header.name] = {
+          title: header.name,
+          description: header.description || '',
+        };
+        return acc;
+      }, {}) || {},
+    };
+    mcpManager.addServerConfig(serverName, serverConfig);
+
+    // console.log('after', mcpToolsCache);
+
     // Invalidate the main tools cache to force refresh
     await toolsCache.delete(CacheKeys.TOOLS);
+
+    // Also update the user-specific tools cache with the new MCP tool
+    const userId = req.user?.id;
+    if (userId) {
+      const userTools = (await getCachedTools({ userId, includeGlobal: false })) || {};
+      userTools[mcpTool.pluginKey] = {
+        type: 'function',
+        function: {
+          description: mcpTool.description || '',
+          name: mcpTool.name,
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: [],
+          },
+        },
+      };
+      await setCachedTools(userTools, { userId });
+    }
 
     logger.info(`MCP tool ${serverName} created successfully`);
     res.status(201).json({
@@ -81,10 +119,7 @@ export const addTool = async (req: { body: MCP; user?: { id: string } }, res: Re
 /**
  * Update an existing MCP tool in the system
  */
-export const updateTool = async (
-  req: { body: MCP; params: { mcp_id: string }; user?: { id: string } },
-  res: Response,
-) => {
+const updateTool = async (req, res) => {
   try {
     // Check authentication
     if (!req.user?.id) {
@@ -98,6 +133,7 @@ export const updateTool = async (
     } = req;
 
     // Validate required fields
+    // still need to add the rest (url, timeouts,)
     if (!mcp?.metadata?.name) {
       logger.warn('MCP tool update with missing required fields');
       return res.status(400).json({ message: 'Missing required fields: name is required' });
@@ -123,7 +159,7 @@ export const updateTool = async (
     const toolName = mcp.metadata.name;
     const serverName = mcp.metadata.name;
     const existingTools = await mcpToolsCache.get(serverName);
-
+    
     if (!existingTools || !Array.isArray(existingTools) || existingTools.length === 0) {
       logger.warn(`MCP tool ${mcp_id} not found for update`);
       return res.status(404).json({ message: 'MCP tool not found' });
@@ -148,8 +184,40 @@ export const updateTool = async (
     // Update the MCP tool in the MCP tools cache
     await mcpToolsCache.set(serverName, [mcpTool]);
 
+    // Update the server configuration in the MCPManager
+    const mcpManager = getMCPManager();
+    const serverConfig = {
+      customUserVars: mcp.metadata.customHeaders?.reduce((acc, header) => {
+        acc[header.name] = {
+          title: header.name,
+          description: header.description || '',
+        };
+        return acc;
+      }, {}) || {},
+    };
+    mcpManager.addServerConfig(serverName, serverConfig);
+
     // Invalidate the main tools cache to force refresh
     await toolsCache.delete(CacheKeys.TOOLS);
+
+    // Also update the user-specific tools cache with the updated MCP tool
+    const userId = req.user?.id;
+    if (userId) {
+      const userTools = (await getCachedTools({ userId, includeGlobal: false })) || {};
+      userTools[mcpTool.pluginKey] = {
+        type: 'function',
+        function: {
+          description: mcpTool.description || '',
+          name: mcpTool.name,
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: [],
+          },
+        },
+      };
+      await setCachedTools(userTools, { userId });
+    }
 
     logger.info(`MCP tool ${serverName} updated successfully`);
     res.status(200).json({
@@ -166,10 +234,7 @@ export const updateTool = async (
 /**
  * Delete an MCP tool from the system
  */
-export const deleteTool = async (
-  req: { params: { mcp_id: string }; user?: { id: string } },
-  res: Response,
-) => {
+const deleteTool = async (req, res) => {
   try {
     // Check authentication
     if (!req.user?.id) {
@@ -197,9 +262,6 @@ export const deleteTool = async (
     }
 
     // Find and remove the MCP tool from cache
-    // Note: We need to iterate through the cache to find the tool by mcp_id
-    // This is a simplified approach - in a real implementation, you might want
-    // to maintain a mapping of mcp_id to serverName
     const keys = (await mcpToolsCache.opts?.store?.keys()) || [];
     let deleted = false;
 
@@ -228,8 +290,25 @@ export const deleteTool = async (
       return res.status(404).json({ message: 'MCP tool not found' });
     }
 
+    // Remove the server configuration from the MCPManager
+    const mcpManager = getMCPManager();
+    mcpManager.removeServerConfig(mcp_id);
+
     // Invalidate the main tools cache to force refresh
     await toolsCache.delete(CacheKeys.TOOLS);
+
+    // Also remove the MCP tool from the user-specific tools cache
+    const userId = req.user?.id;
+    if (userId) {
+      const userTools = (await getCachedTools({ userId, includeGlobal: false })) || {};
+      // Find and remove the MCP tool from user cache
+      for (const key of Object.keys(userTools)) {
+        if (key.includes(mcp_id) || key.includes(Constants.mcp_delimiter + mcp_id)) {
+          delete userTools[key];
+        }
+      }
+      await setCachedTools(userTools, { userId });
+    }
 
     logger.info(`MCP tool ${mcp_id} deleted successfully`);
     res.status(200).json({
@@ -241,3 +320,9 @@ export const deleteTool = async (
     res.status(500).json({ message: 'Failed to delete MCP tool' });
   }
 };
+
+module.exports = {
+  addTool,
+  updateTool,
+  deleteTool,
+}; 

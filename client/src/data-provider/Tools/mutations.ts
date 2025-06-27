@@ -48,15 +48,28 @@ export const useCreateMCPMutation = (
 
   return useMutation(
     (mcp: t.MCP) => {
+      console.log('useCreateMCPMutation: calling dataService.createMCP with:', mcp);
       return dataService.createMCP(mcp);
     },
     {
-      onMutate: (variables) => options?.onMutate?.(variables),
-      onError: (error, variables, context) => options?.onError?.(error, variables, context),
+      onMutate: (variables) => {
+        console.log('useCreateMCPMutation: onMutate called with:', variables);
+        return options?.onMutate?.(variables);
+      },
+      onError: (error, variables, context) => {
+        console.log('useCreateMCPMutation: onError called with:', error);
+        return options?.onError?.(error, variables, context);
+      },
       onSuccess: (data, variables, context) => {
+        console.log('useCreateMCPMutation: onSuccess called, invalidating cache...');
+        console.log('useCreateMCPMutation: QueryKeys.tools =', QueryKeys.tools);
+        console.log('useCreateMCPMutation: Invalidating queries with key:', [QueryKeys.tools]);
+
         // Invalidate tools list to trigger refetch
-        queryClient.invalidateQueries([QueryKeys.tools]);
+        queryClient.invalidateQueries({ queryKey: [QueryKeys.tools] });
         // queryClient.invalidateQueries([QueryKeys.mcpTools]);
+
+        console.log('useCreateMCPMutation: cache invalidation completed');
         return options?.onSuccess?.(data, variables, context);
       },
     },
@@ -77,7 +90,7 @@ export const useUpdateMCPMutation = (
       onError: (error, variables, context) => options?.onError?.(error, variables, context),
       onSuccess: (data, variables, context) => {
         // Invalidate tools list to trigger refetch
-        queryClient.invalidateQueries([QueryKeys.tools]);
+        queryClient.invalidateQueries({ queryKey: [QueryKeys.tools] });
         return options?.onSuccess?.(data, variables, context);
       },
     },
@@ -98,7 +111,7 @@ export const useDeleteMCPMutation = (
       onError: (error, variables, context) => options?.onError?.(error, variables, context),
       onSuccess: (data, variables, context) => {
         // Invalidate tools list to trigger refetch
-        queryClient.invalidateQueries([QueryKeys.tools]);
+        queryClient.invalidateQueries({ queryKey: [QueryKeys.tools] });
         return options?.onSuccess?.(data, variables, context);
       },
     },

@@ -1,5 +1,6 @@
 const express = require('express');
-const { addTool, updateTool, deleteTool } = require('@librechat/api');
+// const { addTool, updateTool, deleteTool } = require('@librechat/api');
+const { addTool, updateTool, deleteTool } = require('./mcpOps');
 const { callTool, verifyToolAuth, getToolCalls } = require('~/server/controllers/tools');
 const { getAvailableTools } = require('~/server/controllers/PluginController');
 const { toolCallLimiter } = require('~/server/middleware/limiters');

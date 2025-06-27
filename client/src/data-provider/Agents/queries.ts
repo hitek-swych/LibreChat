@@ -16,6 +16,7 @@ export const useAvailableAgentToolsQuery = (): QueryObserverResult<t.TPlugin[]> 
 
   const enabled = !!endpointsConfig?.[EModelEndpoint.agents];
   return useQuery<t.TPlugin[]>([QueryKeys.tools], () => dataService.getAvailableAgentTools(), {
+    staleTime: 0,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: false,
