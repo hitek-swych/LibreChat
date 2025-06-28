@@ -189,8 +189,6 @@ export function MCPAuth() {
                 </label>
                 <input
                   type="number"
-                  min="1000"
-                  max="300000"
                   placeholder="10000"
                   {...register('requestTimeout')}
                   className="h-9 w-full rounded-md border border-border-medium bg-surface-primary px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
@@ -207,8 +205,6 @@ export function MCPAuth() {
                 </label>
                 <input
                   type="number"
-                  min="1000"
-                  max="60000"
                   placeholder="10000"
                   {...register('connectionTimeout')}
                   className="h-9 w-full rounded-md border border-border-medium bg-surface-primary px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"

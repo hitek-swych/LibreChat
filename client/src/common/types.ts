@@ -167,21 +167,18 @@ export type ActionAuthForm = {
   token_exchange_method: t.TokenExchangeMethodEnum;
 };
 
-export type MCPAuthForm = {
-  customHeaders?: Array<{
-    id: string;
-    name: string;
-    value: string;
-  }>;
-};
-
-export type MCPForm = MCPAuthForm & {
+export type MCPForm = {
   name?: string;
   description?: string;
   url?: string;
   tools?: string[];
   icon?: string;
   trust?: boolean;
+  customHeaders?: Array<{
+    id: string;
+    name: string;
+    value: string;
+  }>;
   requestTimeout?: number;
   connectionTimeout?: number;
 };

@@ -15,7 +15,7 @@ interface MCPInputProps {
   isLoading?: boolean;
 }
 
-export default function MCPInput({ mcp, agent_id, onSave, isLoading = false }: MCPInputProps) {
+export default function MCPInput({ mcp, agent_id = '', onSave, isLoading = false }: MCPInputProps) {
   const localize = useLocalize();
   const {
     handleSubmit,

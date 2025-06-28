@@ -6,6 +6,8 @@ import type { MCPForm } from '~/common';
 import { OGDialog, OGDialogTrigger, Label } from '~/components/ui';
 import OGDialogTemplate from '~/components/ui/OGDialogTemplate';
 import { defaultMCPFormValues } from '~/common/mcp';
+import { useCreateMCPMutation, useUpdateMCPMutation, useDeleteMCPMutation } from '~/data-provider';
+import { useToastContext } from '~/Providers';
 import useLocalize from '~/hooks/useLocalize';
 import { TrashIcon } from '~/components/svg';
 import MCPInput from './MCPInput';
@@ -13,18 +15,14 @@ import MCPInput from './MCPInput';
 interface MCPFormPanelProps {
   // Data
   mcp?: MCP;
-  agent_id?: string;
 
   // Actions
   onBack: () => void;
-  onDelete?: (mcp_id: string, agent_id: string) => void;
-  onSave: (mcp: MCP) => void;
 
   // UI customization
   title?: string;
   subtitle?: string;
   showDeleteButton?: boolean;
-  isDeleteDisabled?: boolean;
   deleteConfirmMessage?: string;
 
   // Form customization
@@ -33,18 +31,66 @@ interface MCPFormPanelProps {
 
 export default function MCPFormPanel({
   mcp,
-  agent_id,
   onBack,
-  onDelete,
-  onSave,
   title,
   subtitle,
   showDeleteButton = true,
-  isDeleteDisabled = false,
   deleteConfirmMessage,
   defaultValues = defaultMCPFormValues,
 }: MCPFormPanelProps) {
   const localize = useLocalize();
+  const { showToast } = useToastContext();
+
+  const create = useCreateMCPMutation({
+    onSuccess: () => {
+      showToast({
+        message: localize('com_ui_update_mcp_success'),
+        status: 'success',
+      });
+      onBack();
+    },
+    onError: (error) => {
+      console.error('Error creating MCP:', error);
+      showToast({
+        message: localize('com_ui_update_mcp_error'),
+        status: 'error',
+      });
+    },
+  });
+
+  const update = useUpdateMCPMutation({
+    onSuccess: () => {
+      showToast({
+        message: localize('com_ui_update_mcp_success'),
+        status: 'success',
+      });
+      onBack();
+    },
+    onError: (error) => {
+      console.error('Error updating MCP:', error);
+      showToast({
+        message: localize('com_ui_update_mcp_error'),
+        status: 'error',
+      });
+    },
+  });
+
+  const deleteMCP = useDeleteMCPMutation({
+    onSuccess: () => {
+      showToast({
+        message: localize('com_ui_delete_mcp_success'),
+        status: 'success',
+      });
+      onBack();
+    },
+    onError: (error) => {
+      console.error('Error deleting MCP:', error);
+      showToast({
+        message: localize('com_ui_delete_mcp_error'),
+        status: 'error',
+      });
+    },
+  });
 
   const methods = useForm<MCPForm>({
     defaultValues: defaultValues,
@@ -70,9 +116,19 @@ export default function MCPFormPanel({
     }
   }, [mcp, reset]);
 
+  const handleSave = (mcpData: MCP) => {
+    if (mcp) {
+      // Update existing MCP
+      update.mutate({ mcp_id: mcp.mcp_id, data: mcpData });
+    } else {
+      // Create new MCP
+      create.mutate(mcpData);
+    }
+  };
+
   const handleDelete = () => {
-    if (onDelete && mcp?.mcp_id && agent_id) {
-      onDelete(mcp.mcp_id, agent_id);
+    if (mcp?.mcp_id) {
+      deleteMCP.mutate({ mcp_id: mcp.mcp_id });
     }
   };
 
@@ -89,13 +145,13 @@ export default function MCPFormPanel({
               </button>
             </div>
 
-            {!!mcp && showDeleteButton && onDelete && (
+            {!!mcp && showDeleteButton && (
               <OGDialog>
                 <OGDialogTrigger asChild>
                   <div className="absolute right-0 top-6">
                     <button
                       type="button"
-                      disabled={isDeleteDisabled || !mcp.mcp_id || !agent_id}
+                      disabled={!mcp.mcp_id}
                       className="btn btn-neutral border-token-border-light relative h-9 rounded-lg font-medium"
                     >
                       <TrashIcon className="text-red-500" />
@@ -127,7 +183,12 @@ export default function MCPFormPanel({
             </div>
             <div className="text-xs text-text-secondary">{subtitle || ''}</div>
           </div>
-          <MCPInput mcp={mcp} agent_id={agent_id} onSave={onSave} />
+          <MCPInput
+            mcp={mcp}
+            agent_id=""
+            onSave={handleSave}
+            isLoading={create.isLoading || update.isLoading}
+          />
         </div>
       </form>
     </FormProvider>

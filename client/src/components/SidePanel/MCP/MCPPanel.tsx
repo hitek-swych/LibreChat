@@ -5,21 +5,19 @@ import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useUpdateUserPluginsMutation } from 'librechat-data-provider/react-query';
 import type { TUpdateUserPlugins } from 'librechat-data-provider';
 import type { MCP } from 'librechat-data-provider';
-import { useCreateMCPMutation, useUpdateMCPMutation, useDeleteMCPMutation } from '~/data-provider';
+import { useDeleteMCPMutation } from '~/data-provider';
 import { Button, Input, Label, OGDialog, OGDialogTrigger, OGDialogTemplate } from '~/components/ui';
-import { useGetStartupConfig } from '~/data-provider';
 import { useAvailableAgentToolsQuery } from '~/data-provider/Agents/queries';
+import { useGetStartupConfig } from '~/data-provider';
 import MCPPanelSkeleton from './MCPPanelSkeleton';
 import { useToastContext } from '~/Providers';
 import MCPFormPanel from './MCPFormPanel';
 import { useLocalize } from '~/hooks';
 
-interface ServerConfigWithVars {
-  serverName: string;
-  config: {
-    customUserVars: Record<string, { title: string; description: string }>;
-  };
-}
+type MCPWithExtras = MCP & {
+  isUserCreated: boolean;
+  customUserVars?: Record<string, { title: string; description: string }>;
+};
 
 export default function MCPPanel() {
   const localize = useLocalize();
@@ -80,25 +78,28 @@ export default function MCPPanel() {
   // Combine startup config MCP servers with user-created MCP tools
   const allMCPServers = useMemo(() => {
     const serverSet = new Set<string>();
-    const servers: Array<{
-      serverName: string;
-      iconPath: string | null;
-      config: {
-        customUserVars: Record<string, { title: string; description: string }>;
-      };
-      isUserCreated: boolean;
-      mcpData?: any; // Store the original MCP tool data for user-created servers
-    }> = [];
+    const servers: MCPWithExtras[] = [];
 
     // Add startup config servers first
     mcpServerDefinitions.forEach((server) => {
       if (!serverSet.has(server.serverName)) {
         serverSet.add(server.serverName);
         servers.push({
-          serverName: server.serverName,
-          iconPath: server.iconPath,
-          config: server.config,
+          mcp_id: server.serverName,
+          agent_id: '',
+          metadata: {
+            name: server.serverName,
+            description: '',
+            url: '',
+            icon: server.iconPath || '',
+            tools: [],
+            trust: false,
+            customHeaders: [],
+            requestTimeout: undefined,
+            connectionTimeout: undefined,
+          },
           isUserCreated: false,
+          customUserVars: server.config.customUserVars || {},
         });
       }
     });
@@ -108,23 +109,31 @@ export default function MCPPanel() {
       if (!serverSet.has(tool.name)) {
         serverSet.add(tool.name);
         servers.push({
-          serverName: tool.name,
-          iconPath: tool.icon || null,
-          config: {
-            customUserVars:
-              tool.authConfig?.reduce(
-                (acc, auth) => {
-                  acc[auth.authField] = {
-                    title: auth.label || auth.authField,
-                    description: auth.description || '',
-                  };
-                  return acc;
-                },
-                {} as Record<string, { title: string; description: string }>,
-              ) || {},
+          mcp_id: tool.name, // Use name as mcp_id for now
+          agent_id: '', // Empty for general chat use
+          metadata: {
+            name: tool.name,
+            description: '',
+            url: '',
+            icon: tool.icon || '',
+            tools: [],
+            trust: false,
+            customHeaders: [],
+            requestTimeout: undefined,
+            connectionTimeout: undefined,
           },
           isUserCreated: true,
-          mcpData: tool,
+          customUserVars:
+            tool.authConfig?.reduce(
+              (acc, auth) => {
+                acc[auth.authField] = {
+                  title: auth.label || auth.authField,
+                  description: auth.description || '',
+                };
+                return acc;
+              },
+              {} as Record<string, { title: string; description: string }>,
+            ) || {},
         });
       }
     });
@@ -140,41 +149,6 @@ export default function MCPPanel() {
       console.error('Error updating MCP custom user variables:', error);
       showToast({
         message: localize('com_nav_mcp_vars_update_error'),
-        status: 'error',
-      });
-    },
-  });
-
-  const create = useCreateMCPMutation({
-    onSuccess: () => {
-      showToast({
-        message: localize('com_ui_update_mcp_success'),
-        status: 'success',
-      });
-      setShowMCPForm(false);
-    },
-    onError: (error) => {
-      console.error('Error creating MCP:', error);
-      showToast({
-        message: localize('com_ui_update_mcp_error'),
-        status: 'error',
-      });
-    },
-  });
-
-  const update = useUpdateMCPMutation({
-    onSuccess: () => {
-      showToast({
-        message: localize('com_ui_update_mcp_success'),
-        status: 'success',
-      });
-      setShowMCPForm(false);
-      setEditingMCP(null);
-    },
-    onError: (error) => {
-      console.error('Error updating MCP:', error);
-      showToast({
-        message: localize('com_ui_update_mcp_error'),
         status: 'error',
       });
     },
@@ -223,29 +197,12 @@ export default function MCPPanel() {
   );
 
   const handleServerClickToEdit = (serverName: string) => {
-    const server = allMCPServers.find((s) => s.serverName === serverName);
+    const server = allMCPServers.find((s) => s.mcp_id === serverName);
     if (!server) return;
 
     if (server.isUserCreated) {
-      // For user-created servers, create a minimal MCP structure with available data
-      // Hopefully we will refactor useGetAvailableTools to return MCP[] rather than TPlugin[]
-      // and then we wont lose the MCP data like timeouts and custom headers when we refetch the tools
-      const mcpForEditing = {
-        mcp_id: server.mcpData.name, // Use name as mcp_id for now
-        agent_id: '', // Will be set by the form
-        metadata: {
-          name: server.mcpData.name,
-          description: '', // Will need to be filled by user
-          url: '', // Will need to be filled by user
-          icon: server.mcpData.icon || '',
-          tools: [], // Will need to be filled by user
-          trust: false, // Default value
-          customHeaders: [], // Default empty array
-          requestTimeout: undefined,
-          connectionTimeout: undefined,
-        },
-      };
-      setEditingMCP(mcpForEditing);
+      // For user-created servers, open the MCP form in edit mode
+      setEditingMCP(server);
       setShowMCPForm(true);
     } else {
       // For startup config servers, open the variable editor
@@ -266,28 +223,11 @@ export default function MCPPanel() {
     setEditingMCP(null);
   };
 
-  const handleSaveMCP = (mcp: MCP) => {
-    if (editingMCP) {
-      // Update existing MCP
-      update.mutate({ mcp_id: editingMCP.mcp_id || editingMCP.name, data: mcp });
-    } else {
-      // Create new MCP
-      create.mutate(mcp);
-    }
-  };
-
-  const handleDeleteMCP = (mcp_id: string, agent_id: string) => {
-    deleteMCP.mutate({ mcp_id });
-  };
-
   if (showMCPForm) {
     return (
       <MCPFormPanel
         mcp={editingMCP}
         onBack={handleBackFromForm}
-        onSave={handleSaveMCP}
-        onDelete={handleDeleteMCP}
-        showDeleteButton={!!editingMCP}
         title={editingMCP ? localize('com_ui_edit_mcp_server') : localize('com_ui_add_mcp_server')}
         subtitle={
           editingMCP
@@ -327,9 +267,7 @@ export default function MCPPanel() {
 
   if (selectedServerNameForEditing) {
     // Editing View
-    const serverBeingEdited = allMCPServers.find(
-      (s) => s.serverName === selectedServerNameForEditing,
-    );
+    const serverBeingEdited = allMCPServers.find((s) => s.mcp_id === selectedServerNameForEditing);
 
     if (!serverBeingEdited) {
       // Fallback to list view if server not found
@@ -352,7 +290,7 @@ export default function MCPPanel() {
           {localize('com_ui_back')}
         </Button>
         <h3 className="mb-3 text-lg font-medium">
-          {localize('com_sidepanel_mcp_variables_for', { '0': serverBeingEdited.serverName })}
+          {localize('com_sidepanel_mcp_variables_for', { '0': serverBeingEdited.mcp_id })}
         </h3>
         <MCPVariableEditor
           server={serverBeingEdited}
@@ -369,13 +307,13 @@ export default function MCPPanel() {
         <div className="space-y-2">
           {allMCPServers.map((server) => (
             <Button
-              key={server.serverName}
+              key={server.mcp_id}
               variant="outline"
               className="w-full justify-start pl-4 pr-2 dark:hover:bg-gray-700"
-              onClick={() => handleServerClickToEdit(server.serverName)}
+              onClick={() => handleServerClickToEdit(server.mcp_id)}
             >
               <div className="flex w-full items-center justify-between">
-                <span>{server.serverName}</span>
+                <span>{server.mcp_id}</span>
                 {server.isUserCreated && (
                   <OGDialog>
                     <OGDialogTrigger asChild>
@@ -383,7 +321,7 @@ export default function MCPPanel() {
                         type="button"
                         className="ml-4 flex h-7 w-7 items-center justify-center rounded p-1 text-white hover:bg-surface-secondary"
                         onClick={(e) => e.stopPropagation()}
-                        aria-label={`Delete ${server.serverName}`}
+                        aria-label={`Delete ${server.mcp_id}`}
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -399,7 +337,7 @@ export default function MCPPanel() {
                       }
                       selection={{
                         selectHandler: () => {
-                          deleteMCP.mutate({ mcp_id: server.serverName });
+                          deleteMCP.mutate({ mcp_id: server.mcp_id });
                         },
                         selectClasses:
                           'bg-red-700 dark:bg-red-600 hover:bg-red-800 dark:hover:bg-red-800 transition-color duration-200 text-white',
@@ -429,7 +367,7 @@ export default function MCPPanel() {
 
 // Inner component for the form - remains the same
 interface MCPVariableEditorProps {
-  server: ServerConfigWithVars;
+  server: MCPWithExtras;
   onSave: (serverName: string, updatedValues: Record<string, string>) => void;
   onRevoke: (serverName: string) => void;
   isSubmitting: boolean;
@@ -449,7 +387,7 @@ function MCPVariableEditor({ server, onSave, onRevoke, isSubmitting }: MCPVariab
 
   useEffect(() => {
     // Always initialize with empty strings based on the schema
-    const initialFormValues = Object.keys(server.config.customUserVars).reduce(
+    const initialFormValues = Object.keys(server.customUserVars || {}).reduce(
       (acc, key) => {
         acc[key] = '';
         return acc;
@@ -457,21 +395,21 @@ function MCPVariableEditor({ server, onSave, onRevoke, isSubmitting }: MCPVariab
       {} as Record<string, string>,
     );
     reset(initialFormValues);
-  }, [reset, server.config.customUserVars]);
+  }, [reset, server.customUserVars]);
 
   const onFormSubmit = (data: Record<string, string>) => {
-    onSave(server.serverName, data);
+    onSave(server.mcp_id, data);
   };
 
   const handleRevokeClick = () => {
-    onRevoke(server.serverName);
+    onRevoke(server.mcp_id);
   };
 
   return (
     <form onSubmit={handleSubmit(onFormSubmit)} className="mb-4 mt-2 space-y-4">
-      {Object.entries(server.config.customUserVars).map(([key, details]) => (
+      {Object.entries(server.customUserVars || {}).map(([key, details]) => (
         <div key={key} className="space-y-2">
-          <Label htmlFor={`${server.serverName}-${key}`} className="text-sm font-medium">
+          <Label htmlFor={`${server.mcp_id}-${key}`} className="text-sm font-medium">
             {details.title}
           </Label>
           <Controller
@@ -480,7 +418,7 @@ function MCPVariableEditor({ server, onSave, onRevoke, isSubmitting }: MCPVariab
             defaultValue={''}
             render={({ field }) => (
               <Input
-                id={`${server.serverName}-${key}`}
+                id={`${server.mcp_id}-${key}`}
                 type="text"
                 {...field}
                 placeholder={localize('com_sidepanel_mcp_enter_value', { '0': details.title })}
@@ -498,7 +436,7 @@ function MCPVariableEditor({ server, onSave, onRevoke, isSubmitting }: MCPVariab
         </div>
       ))}
       <div className="flex justify-end gap-2 pt-2">
-        {Object.keys(server.config.customUserVars).length > 0 && (
+        {Object.keys(server.customUserVars || {}).length > 0 && (
           <Button
             type="button"
             onClick={handleRevokeClick}
