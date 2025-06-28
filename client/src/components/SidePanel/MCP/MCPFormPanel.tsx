@@ -125,9 +125,7 @@ export default function MCPFormPanel({
               {title ||
                 (mcp ? localize('com_ui_edit_mcp_server') : localize('com_ui_add_mcp_server'))}
             </div>
-            <div className="text-xs text-text-secondary">
-              {subtitle || localize('com_agents_mcp_info')}
-            </div>
+            <div className="text-xs text-text-secondary">{subtitle || ''}</div>
           </div>
           <MCPInput mcp={mcp} agent_id={agent_id} onSave={onSave} />
         </div>

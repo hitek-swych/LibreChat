@@ -1,12 +1,12 @@
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Trash2 } from 'lucide-react';
 import { Constants } from 'librechat-data-provider';
 import { useForm, Controller } from 'react-hook-form';
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useUpdateUserPluginsMutation } from 'librechat-data-provider/react-query';
 import type { TUpdateUserPlugins } from 'librechat-data-provider';
 import type { MCP } from 'librechat-data-provider';
-import { useCreateMCPMutation } from '~/data-provider';
-import { Button, Input, Label } from '~/components/ui';
+import { useCreateMCPMutation, useUpdateMCPMutation, useDeleteMCPMutation } from '~/data-provider';
+import { Button, Input, Label, OGDialog, OGDialogTrigger, OGDialogTemplate } from '~/components/ui';
 import { useGetStartupConfig } from '~/data-provider';
 import { useAvailableAgentToolsQuery } from '~/data-provider/Agents/queries';
 import MCPPanelSkeleton from './MCPPanelSkeleton';
@@ -30,6 +30,7 @@ export default function MCPPanel() {
     null,
   );
   const [showMCPForm, setShowMCPForm] = useState(false);
+  const [editingMCP, setEditingMCP] = useState<any>(null);
 
   const mcpServerDefinitions = useMemo(() => {
     if (!startupConfig?.mcpServers) {
@@ -85,6 +86,8 @@ export default function MCPPanel() {
       config: {
         customUserVars: Record<string, { title: string; description: string }>;
       };
+      isUserCreated: boolean;
+      mcpData?: any; // Store the original MCP tool data for user-created servers
     }> = [];
 
     // Add startup config servers first
@@ -95,6 +98,7 @@ export default function MCPPanel() {
           serverName: server.serverName,
           iconPath: server.iconPath,
           config: server.config,
+          isUserCreated: false,
         });
       }
     });
@@ -119,6 +123,8 @@ export default function MCPPanel() {
                 {} as Record<string, { title: string; description: string }>,
               ) || {},
           },
+          isUserCreated: true,
+          mcpData: tool,
         });
       }
     });
@@ -156,6 +162,42 @@ export default function MCPPanel() {
     },
   });
 
+  const update = useUpdateMCPMutation({
+    onSuccess: () => {
+      showToast({
+        message: localize('com_ui_update_mcp_success'),
+        status: 'success',
+      });
+      setShowMCPForm(false);
+      setEditingMCP(null);
+    },
+    onError: (error) => {
+      console.error('Error updating MCP:', error);
+      showToast({
+        message: localize('com_ui_update_mcp_error'),
+        status: 'error',
+      });
+    },
+  });
+
+  const deleteMCP = useDeleteMCPMutation({
+    onSuccess: () => {
+      showToast({
+        message: localize('com_ui_delete_mcp_success'),
+        status: 'success',
+      });
+      setShowMCPForm(false);
+      setEditingMCP(null);
+    },
+    onError: (error) => {
+      console.error('Error deleting MCP:', error);
+      showToast({
+        message: localize('com_ui_delete_mcp_error'),
+        status: 'error',
+      });
+    },
+  });
+
   const handleSaveServerVars = useCallback(
     (serverName: string, updatedValues: Record<string, string>) => {
       const payload: TUpdateUserPlugins = {
@@ -181,7 +223,34 @@ export default function MCPPanel() {
   );
 
   const handleServerClickToEdit = (serverName: string) => {
-    setSelectedServerNameForEditing(serverName);
+    const server = allMCPServers.find((s) => s.serverName === serverName);
+    if (!server) return;
+
+    if (server.isUserCreated) {
+      // For user-created servers, create a minimal MCP structure with available data
+      // Hopefully we will refactor useGetAvailableTools to return MCP[] rather than TPlugin[]
+      // and then we wont lose the MCP data like timeouts and custom headers when we refetch the tools
+      const mcpForEditing = {
+        mcp_id: server.mcpData.name, // Use name as mcp_id for now
+        agent_id: '', // Will be set by the form
+        metadata: {
+          name: server.mcpData.name,
+          description: '', // Will need to be filled by user
+          url: '', // Will need to be filled by user
+          icon: server.mcpData.icon || '',
+          tools: [], // Will need to be filled by user
+          trust: false, // Default value
+          customHeaders: [], // Default empty array
+          requestTimeout: undefined,
+          connectionTimeout: undefined,
+        },
+      };
+      setEditingMCP(mcpForEditing);
+      setShowMCPForm(true);
+    } else {
+      // For startup config servers, open the variable editor
+      setSelectedServerNameForEditing(serverName);
+    }
   };
 
   const handleGoBackToList = () => {
@@ -194,20 +263,37 @@ export default function MCPPanel() {
 
   const handleBackFromForm = () => {
     setShowMCPForm(false);
+    setEditingMCP(null);
   };
 
   const handleSaveMCP = (mcp: MCP) => {
-    create.mutate(mcp);
+    if (editingMCP) {
+      // Update existing MCP
+      update.mutate({ mcp_id: editingMCP.mcp_id || editingMCP.name, data: mcp });
+    } else {
+      // Create new MCP
+      create.mutate(mcp);
+    }
+  };
+
+  const handleDeleteMCP = (mcp_id: string, agent_id: string) => {
+    deleteMCP.mutate({ mcp_id });
   };
 
   if (showMCPForm) {
     return (
       <MCPFormPanel
+        mcp={editingMCP}
         onBack={handleBackFromForm}
         onSave={handleSaveMCP}
-        showDeleteButton={false}
-        title={localize('com_ui_add_mcp_server')}
-        subtitle={localize('com_agents_mcp_info_chat')}
+        onDelete={handleDeleteMCP}
+        showDeleteButton={!!editingMCP}
+        title={editingMCP ? localize('com_ui_edit_mcp_server') : localize('com_ui_add_mcp_server')}
+        subtitle={
+          editingMCP
+            ? localize('com_ui_edit_mcp_description')
+            : localize('com_agents_mcp_info_chat')
+        }
       />
     );
   }
@@ -285,11 +371,43 @@ export default function MCPPanel() {
             <Button
               key={server.serverName}
               variant="outline"
-              className="w-full justify-start dark:hover:bg-gray-700"
+              className="w-full justify-start pl-4 pr-2 dark:hover:bg-gray-700"
               onClick={() => handleServerClickToEdit(server.serverName)}
             >
               <div className="flex w-full items-center justify-between">
                 <span>{server.serverName}</span>
+                {server.isUserCreated && (
+                  <OGDialog>
+                    <OGDialogTrigger asChild>
+                      <button
+                        type="button"
+                        className="ml-4 flex h-7 w-7 items-center justify-center rounded p-1 text-white hover:bg-surface-secondary"
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Delete ${server.serverName}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </OGDialogTrigger>
+                    <OGDialogTemplate
+                      showCloseButton={false}
+                      title={localize('com_ui_delete_mcp')}
+                      className="max-w-[450px]"
+                      main={
+                        <Label className="text-left text-sm font-medium">
+                          {localize('com_ui_delete_mcp_confirm')}
+                        </Label>
+                      }
+                      selection={{
+                        selectHandler: () => {
+                          deleteMCP.mutate({ mcp_id: server.serverName });
+                        },
+                        selectClasses:
+                          'bg-red-700 dark:bg-red-600 hover:bg-red-800 dark:hover:bg-red-800 transition-color duration-200 text-white',
+                        selectText: localize('com_ui_delete'),
+                      }}
+                    />
+                  </OGDialog>
+                )}
               </div>
             </Button>
           ))}
