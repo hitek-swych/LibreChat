@@ -9,8 +9,6 @@ import { useCreateMCPMutation } from '~/data-provider';
 import { Button, Input, Label } from '~/components/ui';
 import { useGetStartupConfig } from '~/data-provider';
 import { useAvailableAgentToolsQuery } from '~/data-provider/Agents/queries';
-import { useQueryClient } from '@tanstack/react-query';
-import { QueryKeys } from 'librechat-data-provider';
 import MCPPanelSkeleton from './MCPPanelSkeleton';
 import { useToastContext } from '~/Providers';
 import MCPFormPanel from './MCPFormPanel';
@@ -26,34 +24,12 @@ interface ServerConfigWithVars {
 export default function MCPPanel() {
   const localize = useLocalize();
   const { showToast } = useToastContext();
-  const queryClient = useQueryClient();
   const { data: startupConfig, isLoading: startupConfigLoading } = useGetStartupConfig();
   const { data: availableTools, isLoading: toolsLoading } = useAvailableAgentToolsQuery();
   const [selectedServerNameForEditing, setSelectedServerNameForEditing] = useState<string | null>(
     null,
   );
   const [showMCPForm, setShowMCPForm] = useState(false);
-  const [showDebugTools, setShowDebugTools] = useState(false);
-
-  // Get more query state info for debugging
-  const availableToolsQuery = useAvailableAgentToolsQuery();
-
-  // debugging for query refetching
-  useEffect(() => {
-    console.log('MCPPanel: availableToolsQuery data changed:', {
-      dataLength: availableToolsQuery.data?.length || 0,
-      dataUpdatedAt: availableToolsQuery.dataUpdatedAt,
-      isLoading: availableToolsQuery.isLoading,
-      isFetching: availableToolsQuery.isFetching,
-      isError: availableToolsQuery.isError,
-    });
-  }, [
-    availableToolsQuery.data,
-    availableToolsQuery.dataUpdatedAt,
-    availableToolsQuery.isLoading,
-    availableToolsQuery.isFetching,
-    availableToolsQuery.isError,
-  ]);
 
   const mcpServerDefinitions = useMemo(() => {
     if (!startupConfig?.mcpServers) {
@@ -74,13 +50,81 @@ export default function MCPPanel() {
       }));
   }, [startupConfig?.mcpServers]);
 
-  // Filter MCP tools from available tools
+  // Filter MCP tools from available tools (user-created MCP servers)
   const mcpTools = useMemo(() => {
     if (!availableTools) return [];
-    return availableTools.filter(
-      (tool) => tool.pluginKey && tool.pluginKey.includes(Constants.mcp_delimiter),
-    );
+
+    // Use the same filtering logic as MCPSelect
+    const mcpToolsMap = new Map<string, any>();
+    availableTools.forEach((tool) => {
+      const isMCP = tool.pluginKey.includes(Constants.mcp_delimiter);
+      if (isMCP && tool.chatMenu !== false) {
+        const parts = tool.pluginKey.split(Constants.mcp_delimiter);
+        const serverName = parts[parts.length - 1];
+        if (!mcpToolsMap.has(serverName)) {
+          mcpToolsMap.set(serverName, {
+            name: serverName,
+            pluginKey: tool.pluginKey,
+            authConfig: tool.authConfig,
+            authenticated: tool.authenticated,
+            icon: tool.icon,
+          });
+        }
+      }
+    });
+
+    return Array.from(mcpToolsMap.values());
   }, [availableTools]);
+
+  // Combine startup config MCP servers with user-created MCP tools
+  const allMCPServers = useMemo(() => {
+    const serverSet = new Set<string>();
+    const servers: Array<{
+      serverName: string;
+      iconPath: string | null;
+      config: {
+        customUserVars: Record<string, { title: string; description: string }>;
+      };
+    }> = [];
+
+    // Add startup config servers first
+    mcpServerDefinitions.forEach((server) => {
+      if (!serverSet.has(server.serverName)) {
+        serverSet.add(server.serverName);
+        servers.push({
+          serverName: server.serverName,
+          iconPath: server.iconPath,
+          config: server.config,
+        });
+      }
+    });
+
+    // Add user-created servers (only if not already added from startup config)
+    mcpTools.forEach((tool) => {
+      if (!serverSet.has(tool.name)) {
+        serverSet.add(tool.name);
+        servers.push({
+          serverName: tool.name,
+          iconPath: tool.icon || null,
+          config: {
+            customUserVars:
+              tool.authConfig?.reduce(
+                (acc, auth) => {
+                  acc[auth.authField] = {
+                    title: auth.label || auth.authField,
+                    description: auth.description || '',
+                  };
+                  return acc;
+                },
+                {} as Record<string, { title: string; description: string }>,
+              ) || {},
+          },
+        });
+      }
+    });
+
+    return servers;
+  }, [mcpServerDefinitions, mcpTools]);
 
   const updateUserPluginsMutation = useUpdateUserPluginsMutation({
     onSuccess: () => {
@@ -156,11 +200,6 @@ export default function MCPPanel() {
     create.mutate(mcp);
   };
 
-  const handleManualCacheInvalidation = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: [QueryKeys.tools] });
-    showToast({ message: 'Cache invalidated manually', status: 'success' });
-  }, [queryClient, showToast]);
-
   if (showMCPForm) {
     return (
       <MCPFormPanel
@@ -177,103 +216,11 @@ export default function MCPPanel() {
     return <MCPPanelSkeleton />;
   }
 
-  if (mcpServerDefinitions.length === 0) {
+  if (allMCPServers.length === 0) {
     return (
       <div className="h-auto max-w-full overflow-x-hidden p-3">
         <div className="p-4 text-center text-sm text-gray-500">
           {localize('com_sidepanel_mcp_no_servers_with_vars')}
-        </div>
-
-        {/* Debug Tools Section */}
-        <div className="mt-4 border-t border-gray-200 pt-4">
-          <button
-            type="button"
-            onClick={() => setShowDebugTools(!showDebugTools)}
-            className="btn btn-neutral border-token-border-light relative h-9 w-full rounded-lg font-medium"
-          >
-            <div className="flex w-full items-center justify-center gap-2">
-              {showDebugTools ? 'Hide' : 'Show'} Debug Tools (
-              {availableToolsQuery.data?.length || 0} total, {mcpTools.length} MCP)
-            </div>
-          </button>
-
-          {showDebugTools && (
-            <div className="bg-token-surface-secondary mt-4 max-h-96 overflow-y-auto rounded border border-gray-200 p-3 text-xs">
-              <h4 className="mb-2 font-semibold">Available Tools Debug:</h4>
-              <div className="space-y-2">
-                <div>
-                  <strong>Query State:</strong> isLoading={availableToolsQuery.isLoading.toString()}
-                  , isFetching={availableToolsQuery.isFetching.toString()}, isError=
-                  {availableToolsQuery.isError.toString()}
-                </div>
-                <div>
-                  <strong>Data Updated At:</strong>{' '}
-                  {availableToolsQuery.dataUpdatedAt
-                    ? new Date(availableToolsQuery.dataUpdatedAt).toLocaleTimeString()
-                    : 'Never'}
-                </div>
-                <div>
-                  <strong>Total Tools:</strong> {availableToolsQuery.data?.length || 0}
-                </div>
-                <div>
-                  <strong>MCP Tools:</strong> {mcpTools.length}
-                </div>
-                <div>
-                  <strong>MCP Delimiter:</strong> "{Constants.mcp_delimiter}"
-                </div>
-                {availableToolsQuery.error && (
-                  <div className="text-red-500">
-                    <strong>Query Error:</strong> {JSON.stringify(availableToolsQuery.error)}
-                  </div>
-                )}
-                <hr className="my-2" />
-                <div>
-                  <button
-                    type="button"
-                    onClick={handleManualCacheInvalidation}
-                    className="btn btn-neutral border-token-border-light relative h-8 w-full rounded-lg text-xs font-medium"
-                  >
-                    Manual Cache Invalidation
-                  </button>
-                </div>
-                <hr className="my-2" />
-                <div>
-                  <strong>MCP Tools Found:</strong>
-                </div>
-                {mcpTools.map((tool, index) => (
-                  <div key={index} className="bg-token-surface-tertiary ml-2 rounded p-2">
-                    <div>
-                      <strong>Name:</strong> {tool.name}
-                    </div>
-                    <div>
-                      <strong>PluginKey:</strong> {tool.pluginKey}
-                    </div>
-                    <div>
-                      <strong>Description:</strong> {tool.description}
-                    </div>
-                  </div>
-                ))}
-                <hr className="my-2" />
-                <div>
-                  <strong>All Tools:</strong>
-                </div>
-                {availableToolsQuery.data?.map((tool, index) => (
-                  <div key={index} className="bg-token-surface-tertiary ml-2 rounded p-2">
-                    <div>
-                      <strong>Name:</strong> {tool.name}
-                    </div>
-                    <div>
-                      <strong>PluginKey:</strong> {tool.pluginKey}
-                    </div>
-                    <div>
-                      <strong>Has MCP Delimiter:</strong>{' '}
-                      {tool.pluginKey?.includes(Constants.mcp_delimiter) ? 'Yes' : 'No'}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="mt-4">
@@ -294,7 +241,7 @@ export default function MCPPanel() {
 
   if (selectedServerNameForEditing) {
     // Editing View
-    const serverBeingEdited = mcpServerDefinitions.find(
+    const serverBeingEdited = allMCPServers.find(
       (s) => s.serverName === selectedServerNameForEditing,
     );
 
@@ -334,14 +281,16 @@ export default function MCPPanel() {
     return (
       <div className="h-auto max-w-full overflow-x-hidden p-3">
         <div className="space-y-2">
-          {mcpServerDefinitions.map((server) => (
+          {allMCPServers.map((server) => (
             <Button
               key={server.serverName}
               variant="outline"
               className="w-full justify-start dark:hover:bg-gray-700"
               onClick={() => handleServerClickToEdit(server.serverName)}
             >
-              {server.serverName}
+              <div className="flex w-full items-center justify-between">
+                <span>{server.serverName}</span>
+              </div>
             </Button>
           ))}
           <button
